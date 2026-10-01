@@ -1,11 +1,15 @@
 import os
 import json
 import random
-import math
+import re
+from collections import defaultdict
 
 import streamlit as st
+from groq import Groq
 
-from crewai import Agent, Task, Crew, Process, LLM
+# CrewAI is used to define the agent roles/orchestration concept.
+# Actual LLM calls are made directly through the Groq SDK.
+from crewai import Agent
 
 
 # ============================================================
@@ -28,307 +32,199 @@ st.html(
     """
     <style>
 
-    /* ========================================================
-       GLOBAL
-       ======================================================== */
+    /* ---------- Global ---------- */
 
     .stApp {
         background:
-            linear-gradient(
-                135deg,
-                #f8fbff 0%,
-                #eef6ff 50%,
-                #ffffff 100%
-            );
+            radial-gradient(circle at 10% 10%, rgba(37, 99, 235, 0.08), transparent 30%),
+            radial-gradient(circle at 90% 20%, rgba(124, 58, 237, 0.08), transparent 30%),
+            #f8fafc;
     }
 
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 3rem;
-        max-width: 1450px;
+    .main {
+        padding-top: 1rem;
     }
 
+    h1, h2, h3 {
+        color: #0f172a;
+    }
 
-    /* ========================================================
-       HERO
-       ======================================================== */
+    p, li, label {
+        color: #334155;
+    }
+
+    /* ---------- Hero ---------- */
 
     .hero {
         background:
             linear-gradient(
                 135deg,
-                #ffffff 0%,
-                #edf6ff 100%
+                #eff6ff 0%,
+                #ffffff 48%,
+                #f5f3ff 100%
             );
-
-        border: 1px solid #d8e7f5;
+        border: 1px solid #dbeafe;
         border-radius: 24px;
+        padding: 34px 38px;
+        margin-bottom: 24px;
+        box-shadow: 0 12px 35px rgba(15, 23, 42, 0.07);
+    }
 
-        padding: 30px 35px;
-        margin-bottom: 25px;
-
-        box-shadow:
-            0 10px 35px rgba(35, 90, 140, 0.08);
+    .hero-badge {
+        display: inline-block;
+        background: #dbeafe;
+        color: #1d4ed8;
+        border-radius: 999px;
+        padding: 7px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        margin-bottom: 14px;
     }
 
     .hero-title {
-        font-size: 38px;
+        font-size: 42px;
+        line-height: 1.08;
         font-weight: 800;
-        color: #12344d;
-        margin-bottom: 6px;
-        letter-spacing: -0.5px;
+        color: #0f172a;
+        margin-bottom: 12px;
     }
 
     .hero-subtitle {
         font-size: 17px;
-        color: #557086;
+        color: #475569;
         line-height: 1.6;
+        max-width: 950px;
     }
 
-
-    /* ========================================================
-       PIPELINE
-       ======================================================== */
+    /* ---------- Pipeline ---------- */
 
     .pipeline {
         display: flex;
         align-items: center;
         justify-content: center;
-
-        gap: 10px;
+        gap: 9px;
         flex-wrap: wrap;
-
         margin: 20px 0 30px 0;
     }
 
     .pipeline-item {
-        background: #ffffff;
-
-        border: 1px solid #d9e8f5;
+        background: white;
+        border: 1px solid #e2e8f0;
         border-radius: 14px;
-
-        padding: 12px 17px;
-
-        color: #23445b;
-        font-weight: 700;
-
-        box-shadow:
-            0 4px 12px rgba(40, 80, 120, 0.06);
-    }
-
-    .arrow {
-        color: #4b8dcc;
-        font-size: 22px;
-        font-weight: bold;
-    }
-
-
-    /* ========================================================
-       CARDS
-       ======================================================== */
-
-    .card {
-        background: #ffffff;
-
-        border: 1px solid #dceaf5;
-        border-radius: 18px;
-
-        padding: 20px;
-        margin-bottom: 15px;
-
-        box-shadow:
-            0 6px 20px rgba(30, 80, 120, 0.06);
-    }
-
-    .card-title {
-        font-size: 20px;
-        font-weight: 800;
-
-        color: #173f59;
-
-        margin-bottom: 12px;
-    }
-
-
-    /* ========================================================
-       AGENT CARDS
-       ======================================================== */
-
-    .agent-card {
-        background:
-            linear-gradient(
-                135deg,
-                #ffffff,
-                #f5faff
-            );
-
-        border: 1px solid #d5e7f5;
-        border-radius: 16px;
-
-        padding: 18px;
-
-        margin-bottom: 10px;
-
-        min-height: 210px;
-
-        box-shadow:
-            0 5px 18px rgba(30, 80, 120, 0.05);
-    }
-
-    .agent-name {
-        font-weight: 800;
-        color: #174766;
-        font-size: 17px;
-    }
-
-    .agent-status {
-        color: #5e7585;
+        padding: 12px 15px;
         font-size: 13px;
-        margin-top: 4px;
+        font-weight: 700;
+        color: #334155;
+        box-shadow: 0 5px 15px rgba(15, 23, 42, 0.05);
     }
 
-    .agent-description {
-        color: #526b7b;
+    .pipeline-arrow {
+        color: #64748b;
+        font-size: 20px;
+        font-weight: 700;
+    }
+
+    /* ---------- Cards ---------- */
+
+    .info-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
+        padding: 20px;
+        height: 100%;
+        box-shadow: 0 8px 25px rgba(15, 23, 42, 0.05);
+    }
+
+    .info-icon {
+        font-size: 28px;
+        margin-bottom: 8px;
+    }
+
+    .info-title {
+        color: #0f172a;
+        font-size: 17px;
+        font-weight: 800;
+        margin-bottom: 6px;
+    }
+
+    .info-text {
+        color: #64748b;
         font-size: 14px;
-        line-height: 1.6;
-        margin-top: 14px;
+        line-height: 1.55;
     }
 
-
-    /* ========================================================
-       METRIC CARDS
-       ======================================================== */
+    /* ---------- Metrics ---------- */
 
     .metric-card {
-        background: #ffffff;
-
-        border: 1px solid #dceaf5;
+        background: white;
+        border: 1px solid #e2e8f0;
         border-radius: 16px;
-
         padding: 18px;
-
         text-align: center;
-
-        box-shadow:
-            0 5px 18px rgba(30, 80, 120, 0.05);
+        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.04);
     }
 
     .metric-value {
-        font-size: 28px;
+        color: #1d4ed8;
+        font-size: 30px;
         font-weight: 800;
-        color: #1769aa;
     }
 
     .metric-label {
-        color: #657b8b;
+        color: #64748b;
         font-size: 13px;
-        margin-top: 5px;
+        margin-top: 3px;
     }
 
+    /* ---------- Route ---------- */
 
-    /* ========================================================
-       ROUTE
-       ======================================================== */
-
-    .route-container {
-        background: #f8fbff;
-
-        border: 1px solid #dceaf5;
+    .route-box {
+        background: linear-gradient(135deg, #eff6ff, #f5f3ff);
+        border: 1px solid #c7d2fe;
         border-radius: 18px;
-
-        padding: 20px;
-
+        padding: 22px;
         text-align: center;
-
-        margin: 10px 0 20px 0;
+        margin: 15px 0;
     }
 
-    .route-node {
-        display: inline-block;
+    .route-text {
+        font-size: 24px;
+        font-weight: 800;
+        color: #1e3a8a;
+        letter-spacing: 0.5px;
+    }
 
+    /* ---------- Decision ---------- */
+
+    .decision-card {
         background: #ffffff;
-
-        border: 2px solid #6aa9d8;
+        border-left: 5px solid #2563eb;
         border-radius: 12px;
-
-        padding: 10px 14px;
-        margin: 4px;
-
-        color: #19435d;
-        font-weight: 700;
-
-        box-shadow:
-            0 3px 8px rgba(50, 100, 150, 0.05);
+        padding: 14px 18px;
+        margin-bottom: 10px;
+        border-top: 1px solid #e2e8f0;
+        border-right: 1px solid #e2e8f0;
+        border-bottom: 1px solid #e2e8f0;
     }
 
-    .route-arrow {
-        color: #5194c9;
-        font-size: 20px;
-        font-weight: bold;
+    .decision-title {
+        font-weight: 800;
+        color: #0f172a;
+        margin-bottom: 5px;
     }
 
-
-    /* ========================================================
-       INFO BOXES
-       ======================================================== */
-
-    .success-box {
-        background: #eefaf3;
-        border: 1px solid #b9e3ca;
-        color: #1d6b3d;
-
-        border-radius: 14px;
-        padding: 15px;
+    .decision-text {
+        color: #64748b;
+        font-size: 14px;
     }
 
-    .info-box {
-        background: #eef7ff;
-        border: 1px solid #c5dff5;
-        color: #245b83;
-
-        border-radius: 14px;
-        padding: 17px;
-
-        line-height: 1.7;
-    }
-
-
-    /* ========================================================
-       BUTTONS
-       ======================================================== */
-
-    .stButton > button {
-        border-radius: 12px;
-
-        font-weight: 700;
-
-        min-height: 45px;
-    }
-
-
-    /* ========================================================
-       SIDEBAR
-       ======================================================== */
-
-    section[data-testid="stSidebar"] {
-        background: #f8fbfe;
-
-        border-right: 1px solid #dceaf5;
-    }
-
-
-    /* ========================================================
-       FOOTER
-       ======================================================== */
+    /* ---------- Footer ---------- */
 
     .footer {
         text-align: center;
-
-        color: #718596;
-
+        color: #94a3b8;
+        padding: 30px 0 10px 0;
         font-size: 13px;
-
-        padding: 25px;
     }
 
     </style>
@@ -337,45 +233,135 @@ st.html(
 
 
 # ============================================================
+# CONSTANTS
+# ============================================================
+
+MODEL_NAME = "groq/openai/gpt-oss-120b"
+
+
+# ============================================================
+# GROQ CLIENT
+# ============================================================
+
+def get_groq_client():
+    api_key = os.environ.get("GROQ_API_KEY")
+
+    if not api_key:
+        try:
+            api_key = st.secrets["GROQ_API_KEY"]
+        except Exception:
+            api_key = None
+
+    if not api_key:
+        return None
+
+    return Groq(api_key=api_key)
+
+
+# ============================================================
+# CREWAI AGENT DEFINITIONS
+# ============================================================
+
+planner_agent = Agent(
+    role="Delivery Mission Planner",
+    goal=(
+        "Interpret human delivery instructions and convert them into "
+        "clear optimization priorities for a reinforcement learning agent."
+    ),
+    backstory=(
+        "You are an AI logistics planner. You understand delivery "
+        "deadlines, package priority, travel time, cost and risk."
+    ),
+    verbose=False,
+    allow_delegation=False,
+)
+
+explainer_agent = Agent(
+    role="RL Decision Explainer",
+    goal=(
+        "Explain how a Q-learning delivery agent learned and selected "
+        "a route in clear language."
+    ),
+    backstory=(
+        "You explain reinforcement learning decisions to students, "
+        "developers and business users."
+    ),
+    verbose=False,
+    allow_delegation=False,
+)
+
+
+# ============================================================
+# GROQ DIRECT CALL
+# ============================================================
+
+def call_groq(prompt, temperature=0.2, max_tokens=1200):
+
+    client = get_groq_client()
+
+    if client is None:
+        return None, "GROQ_API_KEY is not configured."
+
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model=MODEL_NAME,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        content = chat_completion.choices[0].message.content
+
+        return content, None
+
+    except Exception as e:
+        return None, str(e)
+
+
+# ============================================================
 # DELIVERY MAP
 # ============================================================
 
 LOCATIONS = {
     "Warehouse": (0, 0),
-
-    "A": (1, 0),
-    "B": (2, 0),
-    "C": (3, 0),
-
-    "D": (0, 1),
+    "A": (0, 1),
+    "B": (0, 2),
+    "C": (0, 3),
+    "D": (1, 0),
     "E": (1, 1),
-    "F": (2, 1),
-    "G": (3, 1),
-
-    "H": (0, 2),
-    "I": (1, 2),
+    "F": (1, 2),
+    "G": (1, 3),
+    "H": (2, 0),
+    "I": (2, 1),
     "J": (2, 2),
-    "K": (3, 2),
+    "K": (2, 3),
 }
 
 
-NEIGHBORS = {
-    "Warehouse": ["A", "D"],
+def build_neighbors():
+    neighbors = defaultdict(list)
 
-    "A": ["Warehouse", "B", "E"],
-    "B": ["A", "C", "F"],
-    "C": ["B", "G"],
+    for location, (r, c) in LOCATIONS.items():
 
-    "D": ["Warehouse", "E", "H"],
-    "E": ["D", "A", "F", "I"],
-    "F": ["E", "B", "G", "J"],
-    "G": ["F", "C", "K"],
+        for other, (orow, ocol) in LOCATIONS.items():
 
-    "H": ["D", "I"],
-    "I": ["H", "E", "J"],
-    "J": ["I", "F", "K"],
-    "K": ["J", "G"],
-}
+            if location == other:
+                continue
+
+            distance = abs(r - orow) + abs(c - ocol)
+
+            if distance == 1:
+                neighbors[location].append(other)
+
+    return dict(neighbors)
+
+
+NEIGHBORS = build_neighbors()
 
 
 # ============================================================
@@ -387,61 +373,171 @@ PACKAGES = {
         "destination": "C",
         "priority": "Critical",
         "deadline": 18,
+        "priority_value": 4,
     },
-
     "P2": {
         "destination": "I",
         "priority": "High",
         "deadline": 28,
+        "priority_value": 3,
     },
-
     "P3": {
         "destination": "K",
         "priority": "Normal",
         "deadline": 40,
+        "priority_value": 1,
     },
 }
 
 
+PRIORITY_VALUES = {
+    "Critical": 4,
+    "High": 3,
+    "Normal": 1,
+}
+
+
 # ============================================================
-# HELPER FUNCTIONS
+# LLM MISSION PLANNER
 # ============================================================
 
-def distance(location_a, location_b):
+def plan_mission(user_instruction):
 
-    x1, y1 = LOCATIONS[location_a]
-    x2, y2 = LOCATIONS[location_b]
+    prompt = f"""
+You are the Delivery Mission Planner.
 
-    return math.sqrt(
-        (x2 - x1) ** 2 +
-        (y2 - y1) ** 2
+Human instruction:
+
+"{user_instruction}"
+
+Convert this instruction into optimization priorities for a Q-learning
+delivery robot.
+
+Return ONLY valid JSON.
+
+Use this exact structure:
+
+{{
+    "time_weight": 0.0,
+    "cost_weight": 0.0,
+    "priority_weight": 0.0,
+    "risk_weight": 0.0,
+    "traffic": "Low",
+    "summary": "short explanation"
+}}
+
+Rules:
+
+1. All four weights must be between 0 and 1.
+2. The four weights should approximately add up to 1.
+3. traffic must be one of:
+   Low
+   Medium
+   High
+4. Critical deliveries should increase priority importance.
+5. Urgent/deadline language should increase time importance.
+6. Cheap/economical language should increase cost importance.
+7. Safe/reliable language should increase risk importance.
+8. Do not include Markdown.
+"""
+
+    response, error = call_groq(
+        prompt,
+        temperature=0.1,
+        max_tokens=700,
     )
 
+    if error:
+        return {
+            "time_weight": 0.40,
+            "cost_weight": 0.20,
+            "priority_weight": 0.30,
+            "risk_weight": 0.10,
+            "traffic": "Medium",
+            "summary": "Default logistics priorities were used because the LLM was unavailable.",
+        }, error
 
-def traffic_factor(level):
+    try:
+        cleaned = response.strip()
 
-    factors = {
-        "Low": 1.0,
-        "Medium": 1.25,
-        "High": 1.60,
-    }
+        cleaned = re.sub(
+            r"^```json\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
 
-    return factors[level]
+        cleaned = re.sub(
+            r"^```\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
 
+        cleaned = re.sub(
+            r"\s*```$",
+            "",
+            cleaned,
+        )
 
-def priority_value(priority):
+        data = json.loads(cleaned)
 
-    values = {
-        "Critical": 3.0,
-        "High": 2.0,
-        "Normal": 1.0,
-    }
+        time_weight = float(data.get("time_weight", 0.4))
+        cost_weight = float(data.get("cost_weight", 0.2))
+        priority_weight = float(data.get("priority_weight", 0.3))
+        risk_weight = float(data.get("risk_weight", 0.1))
 
-    return values[priority]
+        total = (
+            time_weight
+            + cost_weight
+            + priority_weight
+            + risk_weight
+        )
+
+        if total <= 0:
+            raise ValueError("Invalid weights")
+
+        # Normalize weights.
+        time_weight /= total
+        cost_weight /= total
+        priority_weight /= total
+        risk_weight /= total
+
+        traffic = str(
+            data.get("traffic", "Medium")
+        ).title()
+
+        if traffic not in ["Low", "Medium", "High"]:
+            traffic = "Medium"
+
+        return {
+            "time_weight": time_weight,
+            "cost_weight": cost_weight,
+            "priority_weight": priority_weight,
+            "risk_weight": risk_weight,
+            "traffic": traffic,
+            "summary": str(
+                data.get(
+                    "summary",
+                    "Mission priorities generated by the LLM.",
+                )
+            ),
+        }, None
+
+    except Exception as e:
+
+        return {
+            "time_weight": 0.40,
+            "cost_weight": 0.20,
+            "priority_weight": 0.30,
+            "risk_weight": 0.10,
+            "traffic": "Medium",
+            "summary": "Could not parse the LLM response, so default weights were used.",
+        }, f"LLM parsing error: {e}"
 
 
 # ============================================================
-# DELIVERY ENVIRONMENT
+# RL ENVIRONMENT
 # ============================================================
 
 class DeliveryEnvironment:
@@ -463,106 +559,132 @@ class DeliveryEnvironment:
 
         self.reset()
 
-
     def reset(self):
 
-        self.location = "Warehouse"
+        self.position = "Warehouse"
 
-        self.time = 0.0
-        self.cost = 0.0
-        self.distance_travelled = 0.0
+        self.delivered = set()
 
-        self.delivered = []
+        self.time = 0
+
+        self.total_cost = 0
+
+        self.total_reward = 0
+
+        self.done = False
 
         return self.get_state()
 
-
     def get_state(self):
 
-        remaining = tuple(
-            package_id
-            for package_id in PACKAGES
-            if package_id not in self.delivered
+        delivered_state = tuple(
+            sorted(self.delivered)
         )
 
         return (
-            self.location,
-            remaining,
+            self.position,
+            delivered_state,
         )
 
+    def get_actions(self):
 
-    def available_actions(self):
-
-        actions = list(
-            NEIGHBORS[self.location]
+        return NEIGHBORS.get(
+            self.position,
+            [],
         )
+
+    def get_move_time(self, destination):
+
+        traffic_multiplier = {
+            "Low": 1.0,
+            "Medium": 1.25,
+            "High": 1.6,
+        }
+
+        return (
+            2
+            * traffic_multiplier.get(
+                self.traffic,
+                1.25,
+            )
+        )
+
+    def step(self, action):
+
+        if self.done:
+
+            return (
+                self.get_state(),
+                0,
+                True,
+                {},
+            )
+
+        if action not in self.get_actions():
+
+            return (
+                self.get_state(),
+                -50,
+                False,
+                {
+                    "invalid": True
+                },
+            )
+
+        previous_position = self.position
+
+        self.position = action
+
+        move_time = self.get_move_time(action)
+
+        move_cost = 1.0
+
+        self.time += move_time
+
+        self.total_cost += move_cost
+
+        reward = 0
+
+        # Base movement penalty.
+        reward -= (
+            self.time_weight
+            * move_time
+        )
+
+        reward -= (
+            self.cost_weight
+            * move_cost
+        )
+
+        # Risk penalty.
+        if self.traffic == "High":
+
+            reward -= (
+                self.risk_weight
+                * 2
+            )
+
+        # Check package deliveries.
+        delivered_package = None
 
         for package_id, package in PACKAGES.items():
 
             if (
-                package["destination"]
-                == self.location
-                and package_id
-                not in self.delivered
+                package["destination"] == self.position
+                and package_id not in self.delivered
             ):
 
-                actions.append(
-                    f"DELIVER_{package_id}"
-                )
+                delivered_package = package_id
 
-        return actions
+                self.delivered.add(package_id)
 
-
-    def step(self, action):
-
-        reward = 0.0
-        done = False
-
-
-        # ----------------------------------------------------
-        # DELIVERY ACTION
-        # ----------------------------------------------------
-
-        if action.startswith("DELIVER_"):
-
-            package_id = action.replace(
-                "DELIVER_",
-                ""
-            )
-
-            if package_id in self.delivered:
-
-                reward -= 10
-
-
-            elif (
-                PACKAGES[package_id]["destination"]
-                != self.location
-            ):
-
-                reward -= 20
-
-
-            else:
-
-                package = PACKAGES[package_id]
-
-                self.delivered.append(
-                    package_id
-                )
-
-                priority_bonus = (
-                    priority_value(
-                        package["priority"]
-                    )
-                    * 15
-                )
+                reward += 60
 
                 reward += (
-                    60
-                    + priority_bonus
+                    self.priority_weight
+                    * package["priority_value"]
+                    * 15
                 )
-
 
                 if self.time <= package["deadline"]:
 
@@ -572,96 +694,36 @@ class DeliveryEnvironment:
 
                     reward -= 30
 
-
-        # ----------------------------------------------------
-        # MOVEMENT ACTION
-        # ----------------------------------------------------
-
-        else:
-
-            if action not in NEIGHBORS[self.location]:
-
-                reward -= 25
-
-            else:
-
-                step_distance = distance(
-                    self.location,
-                    action
-                )
-
-                factor = traffic_factor(
-                    self.traffic
-                )
-
-                travel_time = (
-                    step_distance * factor
-                )
-
-                travel_cost = (
-                    step_distance * 2
-                )
-
-                self.location = action
-
-                self.time += travel_time
-
-                self.cost += travel_cost
-
-                self.distance_travelled += (
-                    step_distance
-                )
-
-
-                # Time penalty
-                reward -= (
-                    travel_time
-                    * self.time_weight
-                )
-
-
-                # Cost penalty
-                reward -= (
-                    travel_cost
-                    * self.cost_weight
-                )
-
-
-                # Traffic penalty
-                if self.traffic == "High":
-
-                    reward -= (
-                        2
-                        * self.risk_weight
-                    )
-
-
-        # ----------------------------------------------------
-        # SUCCESS
-        # ----------------------------------------------------
-
+        # Mission complete.
         if len(self.delivered) == len(PACKAGES):
 
             reward += 100
 
-            done = True
+            self.done = True
 
-
-        # ----------------------------------------------------
-        # TIME LIMIT
-        # ----------------------------------------------------
-
+        # Time limit.
         if self.time > 70:
 
             reward -= 80
 
-            done = True
+            self.done = True
 
+        self.total_reward += reward
+
+        info = {
+            "from": previous_position,
+            "to": self.position,
+            "time": self.time,
+            "cost": self.total_cost,
+            "reward": reward,
+            "delivered_package": delivered_package,
+        }
 
         return (
             self.get_state(),
             reward,
-            done,
+            self.done,
+            info,
         )
 
 
@@ -677,95 +739,64 @@ def choose_action(
 ):
 
     if not actions:
-
         return None
 
-
-    # Exploration
     if random.random() < epsilon:
 
-        return random.choice(
-            actions
-        )
+        return random.choice(actions)
 
-
-    # Exploitation
     values = [
-        q_table.get(
-            (state, action),
-            0.0
-        )
+        q_table[state][action]
         for action in actions
     ]
 
-
-    max_value = max(values)
-
+    maximum = max(values)
 
     best_actions = [
         action
-
-        for action, value
-        in zip(actions, values)
-
-        if value == max_value
+        for action, value in zip(actions, values)
+        if value == maximum
     ]
 
-
-    return random.choice(
-        best_actions
-    )
+    return random.choice(best_actions)
 
 
 def train_q_learning(
-    time_weight,
-    cost_weight,
-    priority_weight,
-    risk_weight,
-    traffic,
+    env,
     episodes=700,
+    learning_rate=0.15,
+    gamma=0.90,
+    epsilon=1.0,
+    epsilon_min=0.05,
+    epsilon_decay=0.992,
 ):
 
-    q_table = {}
+    q_table = defaultdict(
+        lambda: defaultdict(float)
+    )
 
-    learning_rate = 0.15
+    rewards_history = []
 
-    discount_factor = 0.90
+    epsilon_history = []
 
-    epsilon = 1.0
+    best_reward = float("-inf")
 
-    minimum_epsilon = 0.05
-
-    epsilon_decay = 0.992
-
-    episode_rewards = []
-
+    best_route = []
 
     for episode in range(episodes):
 
-        environment = DeliveryEnvironment(
-            time_weight=time_weight,
-            cost_weight=cost_weight,
-            priority_weight=priority_weight,
-            risk_weight=risk_weight,
-            traffic=traffic,
-        )
+        state = env.reset()
 
-        state = environment.reset()
+        episode_reward = 0
 
-        total_reward = 0.0
-
+        route = ["Warehouse"]
 
         for step in range(150):
 
-            actions = (
-                environment.available_actions()
-            )
+            actions = env.get_actions()
 
             if not actions:
-
                 break
-
 
             action = choose_action(
                 q_table,
@@ -774,600 +805,262 @@ def train_q_learning(
                 epsilon,
             )
 
-
-            next_state, reward, done = (
-                environment.step(action)
+            next_state, reward, done, info = env.step(
+                action
             )
 
+            episode_reward += reward
 
-            current_q = q_table.get(
-                (state, action),
-                0.0
-            )
-
-
-            next_actions = (
-                environment.available_actions()
-            )
-
+            next_actions = env.get_actions()
 
             if next_actions:
 
-                max_next_q = max(
-                    q_table.get(
-                        (
-                            next_state,
-                            next_action
-                        ),
-                        0.0
-                    )
-
-                    for next_action
-                    in next_actions
+                next_max = max(
+                    q_table[next_state][a]
+                    for a in next_actions
                 )
 
             else:
 
-                max_next_q = 0.0
+                next_max = 0
 
+            old_value = q_table[state][action]
 
-            new_q = (
-                current_q
-                +
-                learning_rate
-                *
-                (
+            new_value = (
+                old_value
+                + learning_rate
+                * (
                     reward
-                    +
-                    discount_factor
-                    * max_next_q
-                    -
-                    current_q
+                    + gamma * next_max
+                    - old_value
                 )
             )
 
-
-            q_table[
-                (state, action)
-            ] = new_q
-
+            q_table[state][action] = new_value
 
             state = next_state
 
-            total_reward += reward
-
+            route.append(action)
 
             if done:
-
                 break
 
+        rewards_history.append(
+            episode_reward
+        )
+
+        epsilon_history.append(
+            epsilon
+        )
+
+        if episode_reward > best_reward:
+
+            best_reward = episode_reward
+
+            best_route = route.copy()
 
         epsilon = max(
-            minimum_epsilon,
-            epsilon * epsilon_decay
+            epsilon_min,
+            epsilon * epsilon_decay,
         )
-
-
-        episode_rewards.append(
-            total_reward
-        )
-
 
     return (
         q_table,
-        episode_rewards,
+        rewards_history,
+        epsilon_history,
+        best_route,
     )
 
 
 # ============================================================
-# EXECUTE LEARNED POLICY
+# EXTRACT LEARNED ROUTE
 # ============================================================
 
-def run_policy(
+def get_learned_route(
+    env,
     q_table,
-    time_weight,
-    cost_weight,
-    priority_weight,
-    risk_weight,
-    traffic,
+    max_steps=100,
 ):
 
-    environment = DeliveryEnvironment(
-        time_weight=time_weight,
-        cost_weight=cost_weight,
-        priority_weight=priority_weight,
-        risk_weight=risk_weight,
-        traffic=traffic,
-    )
+    env.reset()
 
-    state = environment.reset()
+    route = ["Warehouse"]
 
-    route = [
-        "Warehouse"
-    ]
+    decision_log = []
 
-    decisions = []
+    for step in range(max_steps):
 
-    total_reward = 0.0
+        state = env.get_state()
 
-
-    for step in range(100):
-
-        actions = (
-            environment.available_actions()
-        )
+        actions = env.get_actions()
 
         if not actions:
-
             break
-
 
         action = choose_action(
             q_table,
             state,
             actions,
-            epsilon=0.0,
+            epsilon=0,
         )
 
+        before = env.position
 
-        q_value = q_table.get(
-            (state, action),
-            0.0
+        next_state, reward, done, info = env.step(
+            action
         )
 
-
-        previous_location = (
-            environment.location
-        )
-
-
-        next_state, reward, done = (
-            environment.step(action)
-        )
-
-
-        total_reward += reward
-
-
-        decisions.append(
+        decision_log.append(
             {
-                "step": step + 1,
-                "location": previous_location,
-                "action": action,
-                "q_value": q_value,
-                "reward": reward,
+                "Step": step + 1,
+                "From": before,
+                "Action": action,
+                "Reward": round(reward, 2),
+                "Time": round(env.time, 2),
+                "Cost": round(env.total_cost, 2),
+                "Delivered": info.get(
+                    "delivered_package"
+                )
+                or "-",
             }
         )
 
-
-        if not action.startswith(
-            "DELIVER_"
-        ):
-
-            if (
-                environment.location
-                != route[-1]
-            ):
-
-                route.append(
-                    environment.location
-                )
-
-        else:
-
-            package_id = action.replace(
-                "DELIVER_",
-                ""
-            )
-
-            route.append(
-                f"📦 {package_id} delivered"
-            )
-
-
-        state = next_state
-
+        route.append(action)
 
         if done:
-
             break
 
-
-    return {
-        "route": route,
-
-        "decisions": decisions,
-
-        "reward": total_reward,
-
-        "time": environment.time,
-
-        "cost": environment.cost,
-
-        "distance": (
-            environment.distance_travelled
-        ),
-
-        "delivered": environment.delivered,
-
-        "q_table": q_table,
-    }
+    return (
+        route,
+        decision_log,
+        env,
+    )
 
 
 # ============================================================
-# CREWAI / GROQ
+# RL EXPLANATION
 # ============================================================
 
-def get_crewai_llm():
+def explain_result(
+    mission,
+    plan,
+    route,
+    env,
+    decision_log,
+):
 
-    return LLM(
-        model="groq/openai/gpt-oss-120b",
-        temperature=0.2,
+    delivered = ", ".join(
+        sorted(env.delivered)
+    )
+
+    prompt = f"""
+You are the RL Decision Explainer.
+
+Explain the result of a Smart Delivery Agent demonstration.
+
+Human mission:
+{mission}
+
+LLM-generated objective:
+{json.dumps(plan, indent=2)}
+
+Learned route:
+{" → ".join(route)}
+
+Final time:
+{env.time:.2f}
+
+Final cost:
+{env.total_cost:.2f}
+
+Total reward:
+{env.total_reward:.2f}
+
+Packages delivered:
+{delivered}
+
+Decision steps:
+{json.dumps(decision_log[:12], indent=2)}
+
+Important architecture:
+
+Human Instruction
+→ LLM
+→ Objective / Weights
+→ Q-Learning Agent
+→ Delivery Environment
+→ Learned Route
+→ Evaluation
+→ Explanation
+
+Explain in simple language.
+
+Make it clear that:
+
+1. The LLM does NOT directly choose every movement.
+2. The LLM interprets the human objective.
+3. Q-learning learns action values from environment rewards.
+4. The learned Q-table determines the final route.
+5. Reward represents the optimization objective.
+6. Training and final route selection are different stages.
+
+Keep the explanation under 300 words.
+"""
+
+    response, error = call_groq(
+        prompt,
+        temperature=0.3,
         max_tokens=1000,
     )
 
+    if error:
 
-# ============================================================
-# MISSION PLANNER AGENT
-# ============================================================
-
-def run_planner_agent(
-    user_instruction
-):
-
-    llm = get_crewai_llm()
-
-
-    planner = Agent(
-        role="Delivery Mission Planner",
-
-        goal=(
-            "Translate a human delivery instruction "
-            "into clear optimization priorities."
-        ),
-
-        backstory=(
-            "You are a logistics planning agent. "
-            "You understand natural language delivery "
-            "requirements and convert them into numerical "
-            "optimization priorities for a reinforcement "
-            "learning system."
-        ),
-
-        llm=llm,
-
-        verbose=False,
-
-        allow_delegation=False,
-    )
-
-
-    task = Task(
-
-        description=f"""
-
-        Analyze this delivery instruction:
-
-        "{user_instruction}"
-
-
-        Return ONLY valid JSON:
-
-        {{
-            "time_weight": number,
-            "cost_weight": number,
-            "priority_weight": number,
-            "risk_weight": number,
-            "summary": "short explanation"
-        }}
-
-
-        Requirements:
-
-        - Every weight must be between 0 and 1.
-        - The four weights should add up to approximately 1.
-        - Speed/emergency → higher time_weight.
-        - Low cost → higher cost_weight.
-        - Urgent packages → higher priority_weight.
-        - Safety/reliability → higher risk_weight.
-
-        Do not include Markdown.
-        Do not include code fences.
-
-        """,
-
-        expected_output=(
-            "A valid JSON object."
-        ),
-
-        agent=planner,
-    )
-
-
-    crew = Crew(
-        agents=[
-            planner
-        ],
-
-        tasks=[
-            task
-        ],
-
-        process=Process.sequential,
-
-        verbose=False,
-    )
-
-
-    result = crew.kickoff()
-
-    text = str(result)
-
-
-    try:
-
-        start = text.find("{")
-
-        end = text.rfind("}") + 1
-
-        json_text = text[
-            start:end
-        ]
-
-        data = json.loads(
-            json_text
+        return (
+            "The explanation model could not be reached.\n\n"
+            f"Route: {' → '.join(route)}\n\n"
+            f"Total reward: {env.total_reward:.2f}\n"
+            f"Time: {env.time:.2f}\n"
+            f"Cost: {env.total_cost:.2f}"
         )
 
-    except Exception:
-
-        data = {
-            "time_weight": 0.40,
-            "cost_weight": 0.20,
-            "priority_weight": 0.30,
-            "risk_weight": 0.10,
-            "summary": (
-                "Balanced delivery optimization."
-            ),
-        }
-
-
-    # --------------------------------------------------------
-    # Normalize weights
-    # --------------------------------------------------------
-
-    weights = [
-
-        float(
-            data.get(
-                "time_weight",
-                0.40
-            )
-        ),
-
-        float(
-            data.get(
-                "cost_weight",
-                0.20
-            )
-        ),
-
-        float(
-            data.get(
-                "priority_weight",
-                0.30
-            )
-        ),
-
-        float(
-            data.get(
-                "risk_weight",
-                0.10
-            )
-        ),
-    ]
-
-
-    # Prevent negative values
-    weights = [
-        max(0.0, value)
-        for value in weights
-    ]
-
-
-    total = sum(weights)
-
-
-    if total <= 0:
-
-        weights = [
-            0.40,
-            0.20,
-            0.30,
-            0.10,
-        ]
-
-        total = 1.0
-
-
-    weights = [
-        value / total
-        for value in weights
-    ]
-
-
-    data["time_weight"] = weights[0]
-
-    data["cost_weight"] = weights[1]
-
-    data["priority_weight"] = weights[2]
-
-    data["risk_weight"] = weights[3]
-
-
-    return data
-
-
-# ============================================================
-# EXPLANATION AGENT
-# ============================================================
-
-def run_explanation_agent(
-    instruction,
-    objective,
-    result,
-):
-
-    llm = get_crewai_llm()
-
-
-    explainer = Agent(
-
-        role="Delivery Decision Explainer",
-
-        goal=(
-            "Explain reinforcement learning delivery "
-            "decisions clearly and accurately."
-        ),
-
-        backstory=(
-            "You are an AI logistics analyst. "
-            "You explain the relationship between the "
-            "human objective, reward function, Q-learning "
-            "policy and final delivery result."
-        ),
-
-        llm=llm,
-
-        verbose=False,
-
-        allow_delegation=False,
-    )
-
-
-    task = Task(
-
-        description=f"""
-
-        Explain this delivery decision.
-
-        Human instruction:
-        {instruction}
-
-
-        Objective:
-
-        {json.dumps(
-            objective,
-            indent=2
-        )}
-
-
-        RL Route:
-
-        {result["route"]}
-
-
-        Total Reward:
-
-        {result["reward"]:.2f}
-
-
-        Delivery Time:
-
-        {result["time"]:.2f} minutes
-
-
-        Distance:
-
-        {result["distance"]:.2f} km
-
-
-        Cost:
-
-        {result["cost"]:.2f}
-
-
-        Delivered Packages:
-
-        {result["delivered"]}
-
-
-        Explain in 2-4 concise paragraphs:
-
-        1. What the human wanted.
-        2. How the objective influenced the reward.
-        3. What the Q-learning agent learned.
-        4. Why the final route was selected.
-        5. What the final result means.
-
-
-        IMPORTANT:
-
-        The Q-learning agent selected the route.
-
-        Do not claim that the LLM selected the route.
-
-        The LLM only helped define the objective
-        and explain the result.
-
-        """,
-
-        expected_output=(
-            "A concise explanation for a human audience."
-        ),
-
-        agent=explainer,
-    )
-
-
-    crew = Crew(
-
-        agents=[
-            explainer
-        ],
-
-        tasks=[
-            task
-        ],
-
-        process=Process.sequential,
-
-        verbose=False,
-    )
-
-
-    result_text = crew.kickoff()
-
-    return str(result_text)
+    return response
 
 
 # ============================================================
 # SESSION STATE
 # ============================================================
 
-if "objective" not in st.session_state:
+if "trained" not in st.session_state:
 
-    st.session_state.objective = None
-
+    st.session_state.trained = False
 
 if "q_table" not in st.session_state:
 
     st.session_state.q_table = None
 
-
 if "training_rewards" not in st.session_state:
 
     st.session_state.training_rewards = []
 
+if "route" not in st.session_state:
 
-if "delivery_result" not in st.session_state:
+    st.session_state.route = []
 
-    st.session_state.delivery_result = None
+if "decision_log" not in st.session_state:
 
+    st.session_state.decision_log = []
+
+if "environment" not in st.session_state:
+
+    st.session_state.environment = None
+
+if "plan" not in st.session_state:
+
+    st.session_state.plan = None
 
 if "explanation" not in st.session_state:
 
-    st.session_state.explanation = None
+    st.session_state.explanation = ""
 
 
 # ============================================================
@@ -1378,13 +1071,19 @@ st.html(
     """
     <div class="hero">
 
+        <div class="hero-badge">
+            🤖 LLM + REINFORCEMENT LEARNING
+        </div>
+
         <div class="hero-title">
-            🚚 Smart Delivery Agent
+            Smart Delivery Agent
         </div>
 
         <div class="hero-subtitle">
-            LLM-Guided Reinforcement Learning for
-            Multi-Objective Delivery Optimization
+            A live demonstration of how a Large Language Model can
+            translate human instructions into an optimization objective,
+            while a Q-learning agent learns the actual delivery policy
+            through interaction with an environment.
         </div>
 
     </div>
@@ -1404,44 +1103,46 @@ st.html(
             👤 Human Instruction
         </div>
 
-        <div class="arrow">
-            →
-        </div>
+        <div class="pipeline-arrow">→</div>
 
         <div class="pipeline-item">
-            🤖 CrewAI + Groq
+            🧠 LLM
         </div>
 
-        <div class="arrow">
-            →
-        </div>
+        <div class="pipeline-arrow">→</div>
 
         <div class="pipeline-item">
             🎯 Objective
         </div>
 
-        <div class="arrow">
-            →
-        </div>
+        <div class="pipeline-arrow">→</div>
 
         <div class="pipeline-item">
-            🧠 Q-Learning
+            🎓 Q-Learning
         </div>
 
-        <div class="arrow">
-            →
-        </div>
+        <div class="pipeline-arrow">→</div>
 
         <div class="pipeline-item">
             🌍 Environment
         </div>
 
-        <div class="arrow">
-            →
-        </div>
+        <div class="pipeline-arrow">→</div>
 
         <div class="pipeline-item">
-            📦 Delivery
+            🗺️ Learned Route
+        </div>
+
+        <div class="pipeline-arrow">→</div>
+
+        <div class="pipeline-item">
+            📊 Evaluation
+        </div>
+
+        <div class="pipeline-arrow">→</div>
+
+        <div class="pipeline-item">
+            💬 Explanation
         </div>
 
     </div>
@@ -1455,1005 +1156,706 @@ st.html(
 
 with st.sidebar:
 
-    st.markdown(
-        "## 🎛️ Mission Control"
-    )
+    st.header("⚙️ Mission Control")
 
     st.caption(
-        "Configure the delivery environment."
+        "Configure the reinforcement learning experiment."
     )
-
-
-    traffic = st.selectbox(
-        "🚦 Traffic Level",
-
-        [
-            "Low",
-            "Medium",
-            "High",
-        ],
-
-        index=1,
-    )
-
 
     episodes = st.slider(
-        "🧠 Training Episodes",
-
-        min_value=200,
-
+        "Training Episodes",
+        min_value=100,
         max_value=1500,
-
         value=700,
-
         step=100,
     )
 
+    learning_rate = st.slider(
+        "Learning Rate",
+        min_value=0.05,
+        max_value=0.50,
+        value=0.15,
+        step=0.05,
+    )
+
+    gamma = st.slider(
+        "Discount Factor",
+        min_value=0.50,
+        max_value=0.99,
+        value=0.90,
+        step=0.01,
+    )
+
+    epsilon_decay = st.slider(
+        "Exploration Decay",
+        min_value=0.95,
+        max_value=0.999,
+        value=0.992,
+        step=0.001,
+    )
 
     st.divider()
 
-
-    st.markdown(
-        "### 📦 Delivery Packages"
-    )
-
+    st.subheader("📦 Packages")
 
     for package_id, package in PACKAGES.items():
 
         st.write(
-            f"**{package_id}** → "
-            f"{package['destination']} "
-            f"· {package['priority']} "
-            f"· Deadline {package['deadline']} min"
+            f"**{package_id}** → {package['destination']}  \n"
+            f"{package['priority']} priority · "
+            f"Deadline {package['deadline']}"
         )
 
-
     st.divider()
-
-
-    st.markdown(
-        "### 🧠 RL Parameters"
-    )
-
-
-    st.write(
-        "Learning Rate: `0.15`"
-    )
-
-    st.write(
-        "Discount Factor: `0.90`"
-    )
-
-    st.write(
-        "Exploration: `ε-greedy`"
-    )
-
-    st.write(
-        "Algorithm: `Q-Learning`"
-    )
-
-
-    st.divider()
-
 
     st.caption(
-        "LLM: Groq · Model: GPT-OSS-120B"
+        "LLM: Groq / GPT-OSS 120B"
+    )
+
+    st.caption(
+        "RL: Q-Learning"
+    )
+
+    st.caption(
+        "Agent Layer: CrewAI"
     )
 
 
 # ============================================================
-# HUMAN MISSION
+# MAIN INPUT
 # ============================================================
 
-st.html(
-    """
-    <div class="card-title">
-        👤 Human Mission
-    </div>
-    """
+st.subheader("1️⃣ Give the Agent a Human Instruction")
+
+default_instruction = (
+    "Deliver all packages as quickly as possible. "
+    "P1 is critical and must reach its destination before the deadline. "
+    "Avoid unnecessary travel cost and consider traffic risk."
 )
 
-
-instruction = st.text_area(
-
-    "Tell the delivery agent what you want:",
-
-    value=(
-        "Deliver the packages as quickly as possible. "
-        "The critical package should receive the highest "
-        "priority, but keep the delivery cost reasonable."
-    ),
-
+user_instruction = st.text_area(
+    "Mission instruction",
+    value=default_instruction,
     height=110,
-
-    label_visibility="collapsed",
 )
 
 
-if st.button(
-    "🤖 Understand Mission with CrewAI",
-    use_container_width=True,
-    type="primary",
-):
-
-    if not os.environ.get(
-        "GROQ_API_KEY"
-    ):
-
-        st.error(
-            "GROQ_API_KEY is missing. "
-            "Add it to Streamlit Cloud Secrets."
-        )
-
-    else:
-
-        with st.spinner(
-            "CrewAI Mission Planner is analyzing your instruction..."
-        ):
-
-            try:
-
-                objective = (
-                    run_planner_agent(
-                        instruction
-                    )
-                )
-
-
-                st.session_state.objective = (
-                    objective
-                )
-
-
-                st.session_state.q_table = None
-
-                st.session_state.training_rewards = []
-
-                st.session_state.delivery_result = None
-
-                st.session_state.explanation = None
-
-
-                st.success(
-                    "Mission converted into an optimization objective."
-                )
-
-
-            except Exception as error:
-
-                st.error(
-                    f"CrewAI / Groq error: {error}"
-                )
-
-
 # ============================================================
-# OBJECTIVE
+# INFORMATION CARDS
 # ============================================================
 
-if st.session_state.objective:
+col1, col2, col3 = st.columns(3)
 
-    objective = (
-        st.session_state.objective
-    )
-
+with col1:
 
     st.html(
         """
-        <div class="card-title">
-            🎯 LLM-Generated Objective
+        <div class="info-card">
+
+            <div class="info-icon">🧠</div>
+
+            <div class="info-title">
+                LLM Planner
+            </div>
+
+            <div class="info-text">
+                Understands the human instruction and converts
+                natural language into optimization weights.
+            </div>
+
         </div>
         """
     )
 
 
-    columns = st.columns(4)
+with col2:
 
+    st.html(
+        """
+        <div class="info-card">
 
-    metrics = [
+            <div class="info-icon">🎓</div>
 
-        (
-            "⏱️ Time",
-            objective["time_weight"]
-        ),
+            <div class="info-title">
+                Q-Learning Agent
+            </div>
 
-        (
-            "💰 Cost",
-            objective["cost_weight"]
-        ),
+            <div class="info-text">
+                Learns which movement actions produce higher
+                long-term rewards through repeated interaction.
+            </div>
 
-        (
-            "📦 Priority",
-            objective["priority_weight"]
-        ),
-
-        (
-            "🛡️ Risk",
-            objective["risk_weight"]
-        ),
-
-    ]
-
-
-    for column, (
-        label,
-        value
-    ) in zip(
-        columns,
-        metrics
-    ):
-
-        with column:
-
-            st.html(
-                f"""
-                <div class="metric-card">
-
-                    <div class="metric-value">
-                        {value:.2f}
-                    </div>
-
-                    <div class="metric-label">
-                        {label} Weight
-                    </div>
-
-                </div>
-                """
-            )
-
-
-    st.info(
-        "🤖 **Mission Planner:** "
-        + objective.get(
-            "summary",
-            "Balanced delivery optimization."
-        )
+        </div>
+        """
     )
 
 
+with col3:
+
+    st.html(
+        """
+        <div class="info-card">
+
+            <div class="info-icon">🌍</div>
+
+            <div class="info-title">
+                Delivery Environment
+            </div>
+
+            <div class="info-text">
+                Simulates locations, traffic, time, cost,
+                package priorities and deadlines.
+            </div>
+
+        </div>
+        """
+    )
+
+
+st.write("")
+
+
 # ============================================================
-# TRAINING
+# RUN BUTTON
 # ============================================================
 
-st.html(
-    """
-    <div class="card-title">
-        🧠 Reinforcement Learning
-    </div>
-    """
+run_button = st.button(
+    "🚀 Understand Mission & Train Delivery Agent",
+    type="primary",
+    use_container_width=True,
 )
 
 
-if st.button(
-    "🚀 Train Q-Learning Delivery Agent",
-    use_container_width=True,
-):
+# ============================================================
+# EXECUTION
+# ============================================================
 
-    if not st.session_state.objective:
+if run_button:
+
+    if not user_instruction.strip():
 
         st.warning(
-            "First ask CrewAI to understand the mission."
+            "Please provide a delivery instruction."
         )
 
-    else:
+        st.stop()
 
-        objective = (
-            st.session_state.objective
+    # --------------------------------------------------------
+    # Step 1: LLM
+    # --------------------------------------------------------
+
+    with st.status(
+        "🧠 LLM is interpreting the human instruction...",
+        expanded=True,
+    ) as status:
+
+        plan, planner_error = plan_mission(
+            user_instruction
         )
 
+        st.write(
+            "Mission priorities generated."
+        )
 
-        progress = st.progress(0)
+        if planner_error:
 
-        status = st.empty()
-
-
-        with st.spinner(
-            "Q-learning agent is exploring delivery strategies..."
-        ):
-
-            q_table, rewards = (
-                train_q_learning(
-
-                    time_weight=(
-                        objective[
-                            "time_weight"
-                        ]
-                    ),
-
-                    cost_weight=(
-                        objective[
-                            "cost_weight"
-                        ]
-                    ),
-
-                    priority_weight=(
-                        objective[
-                            "priority_weight"
-                        ]
-                    ),
-
-                    risk_weight=(
-                        objective[
-                            "risk_weight"
-                        ]
-                    ),
-
-                    traffic=traffic,
-
-                    episodes=episodes,
-                )
+            st.warning(
+                planner_error
             )
 
-
-        progress.progress(100)
-
-
-        status.success(
-            f"Training completed: {episodes} episodes."
+        status.update(
+            label="✅ Mission interpreted",
+            state="complete",
         )
 
+    # --------------------------------------------------------
+    # Show objective
+    # --------------------------------------------------------
 
-        st.session_state.q_table = (
-            q_table
+    st.subheader("2️⃣ LLM → Optimization Objective")
+
+    objective_cols = st.columns(4)
+
+    with objective_cols[0]:
+
+        st.metric(
+            "⏱️ Time",
+            f"{plan['time_weight']:.2f}",
         )
 
-        st.session_state.training_rewards = (
-            rewards
+    with objective_cols[1]:
+
+        st.metric(
+            "💰 Cost",
+            f"{plan['cost_weight']:.2f}",
         )
 
-        st.session_state.delivery_result = None
+    with objective_cols[2]:
 
-        st.session_state.explanation = None
+        st.metric(
+            "⭐ Priority",
+            f"{plan['priority_weight']:.2f}",
+        )
 
+    with objective_cols[3]:
 
-# ============================================================
-# LEARNING GRAPH
-# ============================================================
+        st.metric(
+            "🛡️ Risk",
+            f"{plan['risk_weight']:.2f}",
+        )
 
-if st.session_state.training_rewards:
-
-    st.markdown(
-        "### 📈 Learning Progress"
+    st.info(
+        f"**LLM interpretation:** {plan['summary']}  \n"
+        f"**Traffic assumption:** {plan['traffic']}"
     )
 
+    # --------------------------------------------------------
+    # Step 2: RL Environment
+    # --------------------------------------------------------
 
-    rewards = (
-        st.session_state.training_rewards
+    environment = DeliveryEnvironment(
+        time_weight=plan["time_weight"],
+        cost_weight=plan["cost_weight"],
+        priority_weight=plan["priority_weight"],
+        risk_weight=plan["risk_weight"],
+        traffic=plan["traffic"],
     )
 
+    # --------------------------------------------------------
+    # Step 3: Q-Learning
+    # --------------------------------------------------------
 
-    window = 30
+    with st.status(
+        "🎓 Q-learning agent is training...",
+        expanded=True,
+    ) as status:
 
-    moving_average = []
-
-
-    for index in range(
-        len(rewards)
-    ):
-
-        start = max(
-            0,
-            index - window + 1
+        (
+            q_table,
+            rewards_history,
+            epsilon_history,
+            best_training_route,
+        ) = train_q_learning(
+            environment,
+            episodes=episodes,
+            learning_rate=learning_rate,
+            gamma=gamma,
+            epsilon_decay=epsilon_decay,
         )
 
-
-        values = rewards[
-            start:index + 1
-        ]
-
-
-        moving_average.append(
-            sum(values)
-            / len(values)
+        st.write(
+            f"Completed {episodes:,} training episodes."
         )
 
+        status.update(
+            label="✅ Q-learning training completed",
+            state="complete",
+        )
 
-    chart_data = {
+    # --------------------------------------------------------
+    # Step 4: Learned route
+    # --------------------------------------------------------
 
-        "Episode Reward":
-            rewards,
-
-        "Moving Average":
-            moving_average,
-    }
-
-
-    st.line_chart(
-        chart_data,
-        height=320,
+    (
+        route,
+        decision_log,
+        final_environment,
+    ) = get_learned_route(
+        environment,
+        q_table,
     )
 
+    # --------------------------------------------------------
+    # Step 5: Explanation
+    # --------------------------------------------------------
 
-    if len(rewards) >= 100:
+    with st.status(
+        "💬 Generating decision explanation...",
+        expanded=True,
+    ) as status:
 
-        first_average = (
-            sum(
-                rewards[:50]
-            )
-            / 50
+        explanation = explain_result(
+            user_instruction,
+            plan,
+            route,
+            final_environment,
+            decision_log,
         )
 
-
-        last_average = (
-            sum(
-                rewards[-50:]
-            )
-            / 50
+        status.update(
+            label="✅ Explanation generated",
+            state="complete",
         )
 
+    # --------------------------------------------------------
+    # Save state
+    # --------------------------------------------------------
 
-        change = (
-            last_average
-            - first_average
-        )
+    st.session_state.trained = True
 
+    st.session_state.q_table = q_table
 
-        if change > 0:
-
-            st.success(
-                f"📈 The average reward improved by "
-                f"{change:.1f} points between the early "
-                f"and late training stages."
-            )
-
-
-# ============================================================
-# EXECUTE DELIVERY
-# ============================================================
-
-if st.session_state.q_table:
-
-    st.html(
-        """
-        <div class="card-title">
-            🚚 Execute Learned Delivery Policy
-        </div>
-        """
+    st.session_state.training_rewards = (
+        rewards_history
     )
 
+    st.session_state.route = route
 
-    if st.button(
-        "📦 Execute Learned Route",
-        use_container_width=True,
-        type="primary",
-    ):
+    st.session_state.decision_log = (
+        decision_log
+    )
 
-        objective = (
-            st.session_state.objective
-        )
+    st.session_state.environment = (
+        final_environment
+    )
 
+    st.session_state.plan = plan
 
-        result = run_policy(
-
-            q_table=(
-                st.session_state.q_table
-            ),
-
-            time_weight=(
-                objective[
-                    "time_weight"
-                ]
-            ),
-
-            cost_weight=(
-                objective[
-                    "cost_weight"
-                ]
-            ),
-
-            priority_weight=(
-                objective[
-                    "priority_weight"
-                ]
-            ),
-
-            risk_weight=(
-                objective[
-                    "risk_weight"
-                ]
-            ),
-
-            traffic=traffic,
-        )
-
-
-        st.session_state.delivery_result = (
-            result
-        )
-
-
-        st.session_state.explanation = None
+    st.session_state.explanation = (
+        explanation
+    )
 
 
 # ============================================================
 # RESULTS
 # ============================================================
 
-if st.session_state.delivery_result:
+if st.session_state.trained:
 
-    result = (
-        st.session_state.delivery_result
+    plan = st.session_state.plan
+
+    environment = st.session_state.environment
+
+    route = st.session_state.route
+
+    decision_log = st.session_state.decision_log
+
+    rewards_history = (
+        st.session_state.training_rewards
     )
 
+    # ========================================================
+    # TRAINING RESULTS
+    # ========================================================
+
+    st.divider()
+
+    st.subheader(
+        "3️⃣ Q-Learning Training"
+    )
+
+    chart_data = {
+        "Episode Reward": rewards_history
+    }
+
+    st.line_chart(
+        chart_data,
+        height=280,
+    )
+
+    if rewards_history:
+
+        recent_count = min(
+            50,
+            len(rewards_history),
+        )
+
+        recent_average = sum(
+            rewards_history[-recent_count:]
+        ) / recent_count
+
+        st.caption(
+            f"Average reward over the last "
+            f"{recent_count} episodes: "
+            f"**{recent_average:.2f}**"
+        )
+
+    # ========================================================
+    # LEARNED ROUTE
+    # ========================================================
+
+    st.subheader(
+        "4️⃣ Learned Delivery Route"
+    )
+
+    route_string = "  →  ".join(
+        route
+    )
 
     st.html(
-        """
-        <div class="card-title">
-            📊 Delivery Evaluation
+        f"""
+        <div class="route-box">
+
+            <div class="route-text">
+                {route_string}
+            </div>
+
         </div>
         """
     )
 
+    # ========================================================
+    # METRICS
+    # ========================================================
 
-    columns = st.columns(5)
+    metric1, metric2, metric3, metric4 = st.columns(4)
 
+    with metric1:
 
-    metrics = [
+        st.html(
+            f"""
+            <div class="metric-card">
 
-        (
-            "🏆 Reward",
-            f"{result['reward']:.1f}"
-        ),
-
-        (
-            "⏱️ Time",
-            f"{result['time']:.1f} min"
-        ),
-
-        (
-            "📍 Distance",
-            f"{result['distance']:.1f} km"
-        ),
-
-        (
-            "💰 Cost",
-            f"{result['cost']:.1f}"
-        ),
-
-        (
-            "📦 Delivered",
-            f"{len(result['delivered'])}/"
-            f"{len(PACKAGES)}"
-        ),
-
-    ]
-
-
-    for column, (
-        label,
-        value
-    ) in zip(
-        columns,
-        metrics
-    ):
-
-        with column:
-
-            st.html(
-                f"""
-                <div class="metric-card">
-
-                    <div class="metric-value">
-                        {value}
-                    </div>
-
-                    <div class="metric-label">
-                        {label}
-                    </div>
-
+                <div class="metric-value">
+                    {len(route) - 1}
                 </div>
-                """
-            )
 
+                <div class="metric-label">
+                    Movement Steps
+                </div>
 
-    # ========================================================
-    # ROUTE
-    # ========================================================
-
-    st.markdown(
-        "### 🗺️ Learned Route"
-    )
-
-
-    route_html = (
-        '<div class="route-container">'
-    )
-
-
-    for index, node in enumerate(
-        result["route"]
-    ):
-
-        route_html += (
-            f'<span class="route-node">'
-            f'{node}'
-            f'</span>'
+            </div>
+            """
         )
 
+    with metric2:
 
-        if index < (
-            len(result["route"]) - 1
-        ):
+        st.html(
+            f"""
+            <div class="metric-card">
 
-            route_html += (
-                '<span class="route-arrow">'
-                '→'
-                '</span>'
-            )
+                <div class="metric-value">
+                    {environment.time:.1f}
+                </div>
 
+                <div class="metric-label">
+                    Total Time
+                </div>
 
-    route_html += (
-        "</div>"
-    )
+            </div>
+            """
+        )
 
+    with metric3:
 
-    st.html(
-        route_html
-    )
+        st.html(
+            f"""
+            <div class="metric-card">
 
+                <div class="metric-value">
+                    {environment.total_cost:.1f}
+                </div>
+
+                <div class="metric-label">
+                    Travel Cost
+                </div>
+
+            </div>
+            """
+        )
+
+    with metric4:
+
+        st.html(
+            f"""
+            <div class="metric-card">
+
+                <div class="metric-value">
+                    {environment.total_reward:.1f}
+                </div>
+
+                <div class="metric-label">
+                    Total Reward
+                </div>
+
+            </div>
+            """
+        )
 
     # ========================================================
     # DELIVERY STATUS
     # ========================================================
 
-    if (
-        len(result["delivered"])
-        == len(PACKAGES)
+    st.subheader(
+        "5️⃣ Delivery Evaluation"
+    )
+
+    evaluation_cols = st.columns(
+        len(PACKAGES)
+    )
+
+    for column, (package_id, package) in zip(
+        evaluation_cols,
+        PACKAGES.items(),
     ):
 
-        st.html(
-            """
-            <div class="success-box">
-                <strong>✅ Mission Completed</strong>
-                <br>
-                The learned policy successfully
-                delivered all packages.
-            </div>
-            """
+        delivered = (
+            package_id
+            in environment.delivered
         )
 
-    else:
+        with column:
 
-        st.warning(
-            "The learned policy did not deliver "
-            "all packages within the simulation limit."
-        )
+            if delivered:
 
+                st.success(
+                    f"✅ {package_id}\n\n"
+                    f"Destination: {package['destination']}\n\n"
+                    f"Priority: {package['priority']}"
+                )
+
+            else:
+
+                st.error(
+                    f"❌ {package_id}\n\n"
+                    f"Destination: {package['destination']}\n\n"
+                    f"Priority: {package['priority']}"
+                )
 
     # ========================================================
     # DECISION LOG
     # ========================================================
 
-    with st.expander(
-        "🧠 View RL Decision Log"
-    ):
+    st.subheader(
+        "6️⃣ Agent Decision Log"
+    )
 
-        for decision in (
-            result["decisions"]
-        ):
+    if decision_log:
 
-            st.write(
-
-                f"**Step {decision['step']}**  ·  "
-
-                f"Location: `{decision['location']}`  ·  "
-
-                f"Action: `{decision['action']}`  ·  "
-
-                f"Q-value: `{decision['q_value']:.2f}`  ·  "
-
-                f"Reward: `{decision['reward']:.2f}`"
-
-            )
-
+        st.dataframe(
+            decision_log,
+            use_container_width=True,
+            hide_index=True,
+        )
 
     # ========================================================
     # Q TABLE
     # ========================================================
 
-    with st.expander(
-        "🔍 Inspect Learned Q-Values"
-    ):
+    st.subheader(
+        "7️⃣ Learned Q-Table"
+    )
 
-        q_rows = []
+    q_table = st.session_state.q_table
 
+    q_rows = []
 
-        for (
-            state,
-            action
-        ), value in result["q_table"].items():
+    for state, actions in q_table.items():
 
-            location = state[0]
+        position = state[0]
 
-            remaining = (
-                ", ".join(
-                    state[1]
-                )
-                if state[1]
-                else "None"
-            )
+        delivered_state = (
+            ", ".join(state[1])
+            if state[1]
+            else "-"
+        )
 
+        for action, value in actions.items():
 
             q_rows.append(
                 {
-                    "Location": location,
-
-                    "Remaining Packages":
-                        remaining,
-
-                    "Action":
-                        action,
-
-                    "Q-Value":
-                        round(
-                            value,
-                            3
-                        ),
+                    "Position": position,
+                    "Delivered": delivered_state,
+                    "Action": action,
+                    "Q-Value": round(
+                        value,
+                        3,
+                    ),
                 }
             )
 
+    if q_rows:
 
-        if q_rows:
+        q_rows = sorted(
+            q_rows,
+            key=lambda x: x["Q-Value"],
+            reverse=True,
+        )
 
-            st.dataframe(
-                q_rows,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-
-            st.info(
-                "No Q-values available."
-            )
-
+        st.dataframe(
+            q_rows[:80],
+            use_container_width=True,
+            hide_index=True,
+        )
 
     # ========================================================
     # EXPLANATION
     # ========================================================
 
-    if st.button(
-        "💡 Explain Why the Agent Chose This Route",
-        use_container_width=True,
+    st.subheader(
+        "8️⃣ AI Explanation"
+    )
+
+    st.info(
+        st.session_state.explanation
+    )
+
+    # ========================================================
+    # ARCHITECTURE
+    # ========================================================
+
+    st.subheader(
+        "9️⃣ System Architecture"
+    )
+
+    architecture_cols = st.columns(5)
+
+    architecture = [
+        (
+            "👤",
+            "Human",
+            "Provides the natural-language delivery objective.",
+        ),
+        (
+            "🧠",
+            "Groq LLM",
+            "Interprets the instruction and creates optimization weights.",
+        ),
+        (
+            "🎓",
+            "Q-Learning",
+            "Learns which actions produce higher long-term rewards.",
+        ),
+        (
+            "🌍",
+            "Environment",
+            "Simulates movement, traffic, time, cost and deliveries.",
+        ),
+        (
+            "📊",
+            "Evaluation",
+            "Measures route quality and explains the learned behavior.",
+        ),
+    ]
+
+    for column, item in zip(
+        architecture_cols,
+        architecture,
     ):
 
-        if not os.environ.get(
-            "GROQ_API_KEY"
-        ):
+        icon, title, description = item
 
-            st.error(
-                "GROQ_API_KEY is missing."
+        with column:
+
+            st.html(
+                f"""
+                <div class="info-card">
+
+                    <div class="info-icon">
+                        {icon}
+                    </div>
+
+                    <div class="info-title">
+                        {title}
+                    </div>
+
+                    <div class="info-text">
+                        {description}
+                    </div>
+
+                </div>
+                """
             )
-
-        else:
-
-            with st.spinner(
-                "Explanation Agent is analyzing the learned policy..."
-            ):
-
-                try:
-
-                    explanation = (
-                        run_explanation_agent(
-
-                            instruction=(
-                                instruction
-                            ),
-
-                            objective=(
-                                st.session_state.objective
-                            ),
-
-                            result=result,
-                        )
-                    )
-
-
-                    st.session_state.explanation = (
-                        explanation
-                    )
-
-
-                except Exception as error:
-
-                    st.error(
-                        f"Explanation error: {error}"
-                    )
-
-
-    if st.session_state.explanation:
-
-        st.html(
-            """
-            <div class="card-title">
-                🤖 AI Explanation
-            </div>
-            """
-        )
-
-
-        st.markdown(
-            st.session_state.explanation
-        )
-
-
-# ============================================================
-# AGENT ARCHITECTURE
-# ============================================================
-
-st.divider()
-
-
-st.html(
-    """
-    <div class="card-title">
-        🤖 Agent Architecture
-    </div>
-    """
-)
-
-
-column1, column2, column3 = (
-    st.columns(3)
-)
-
-
-# ============================================================
-# PLANNER AGENT
-# ============================================================
-
-with column1:
-
-    st.html(
-        """
-        <div class="agent-card">
-
-            <div class="agent-name">
-                🤖 Mission Planner Agent
-            </div>
-
-            <div class="agent-status">
-                CrewAI + Groq
-            </div>
-
-            <div class="agent-description">
-
-                Converts human language into
-                optimization priorities.
-
-                <br><br>
-
-                <b>Input:</b>
-                Human instruction
-
-                <br><br>
-
-                <b>Output:</b>
-                Time / Cost / Priority / Risk
-
-            </div>
-
-        </div>
-        """
-    )
-
-
-# ============================================================
-# RL AGENT
-# ============================================================
-
-with column2:
-
-    st.html(
-        """
-        <div class="agent-card">
-
-            <div class="agent-name">
-                🧠 RL Delivery Agent
-            </div>
-
-            <div class="agent-status">
-                Q-Learning
-            </div>
-
-            <div class="agent-description">
-
-                Learns which delivery actions
-                produce higher long-term rewards.
-
-                <br><br>
-
-                <b>Input:</b>
-                Environment state
-
-                <br><br>
-
-                <b>Output:</b>
-                Learned delivery policy
-
-            </div>
-
-        </div>
-        """
-    )
-
-
-# ============================================================
-# EXPLANATION AGENT
-# ============================================================
-
-with column3:
-
-    st.html(
-        """
-        <div class="agent-card">
-
-            <div class="agent-name">
-                💡 Explanation Agent
-            </div>
-
-            <div class="agent-status">
-                CrewAI + Groq
-            </div>
-
-            <div class="agent-description">
-
-                Explains the learned RL
-                decision to humans.
-
-                <br><br>
-
-                <b>Input:</b>
-                RL results
-
-                <br><br>
-
-                <b>Output:</b>
-                Natural-language explanation
-
-            </div>
-
-        </div>
-        """
-    )
-
-
-# ============================================================
-# FINAL CONCEPT
-# ============================================================
-
-st.html(
-    """
-    <br>
-
-    <div class="info-box">
-
-        <strong>🔗 Complete AI Decision Pipeline</strong>
-
-        <br><br>
-
-        👤 Human Instruction
-        →
-        🤖 CrewAI / Groq
-        →
-        🎯 Objective
-        →
-        🧠 Q-Learning
-        →
-        🌍 Environment
-        →
-        📦 Delivery
-        →
-        💡 Explanation
-
-        <br><br>
-
-        The LLM defines and explains the objective,
-        while the Q-learning agent actually learns
-        the delivery policy.
-
-    </div>
-    """
-)
 
 
 # ============================================================
@@ -2464,19 +1866,14 @@ st.html(
     """
     <div class="footer">
 
-        Smart Delivery Agent
-        ·
-        LLM + CrewAI + Reinforcement Learning
+        Smart Delivery Agent ·
+        Groq + CrewAI + Q-Learning + Streamlit
 
-        <br><br>
+        <br>
 
-        Human Instruction
-        →
-        Objective
-        →
-        Learning
-        →
-        Decision
+        <b>
+        Build with AI, not just use AI.
+        </b>
 
     </div>
     """
